@@ -24,7 +24,7 @@ har-to-hoverfly [--output file.json] [--max-response-bytes N] [--skip-non-text] 
 har-to-hoverfly --output simulation.json input.har
 ```
 
-### Example: Summarise request/response activity
+### Example: Summarise request/response activity to the console
 ```bash
 har-to-hoverfly --summarise input.har
 ```
@@ -34,19 +34,7 @@ har-to-hoverfly --summarise input.har
 har-to-hoverfly --output simulation.json --skip-non-text --host hoverfly.io --max-response-bytes 10240 input.har
 ```
 
-### Example: Summarise request/response activity but only include text based content type responses that come from requests made to hoverfly.io and only include responses less than 10240 bytes
+### Example: Summarise request/response activity to the console but only include text based content type responses that come from requests made to hoverfly.io and only include responses less than 10240 bytes
 ```bash
 har-to-hoverfly --summarise --skip-non-text --host hoverfly.io --max-response-bytes 10240 input.har
 ```
-
-
-Will return to the console:
-
-```
-HOST: api.example.com
-  METHOD     PATH                                               QUERY                                            
-  GET        /api/products                                      category=shoes&limit=5                          
-  POST       /api/shoe                                          product=shirt                                   
-```
-
-
