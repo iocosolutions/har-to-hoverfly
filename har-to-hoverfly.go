@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/url"
 	"os"
@@ -112,7 +111,7 @@ func main() {
 	}
 
 	inputFile := flag.Arg(0)
-	harData, err := ioutil.ReadFile(inputFile)
+	harData, err := os.ReadFile(inputFile)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -229,7 +228,7 @@ func main() {
 	}
 
 	if *outputFile != "" {
-		err := ioutil.WriteFile(*outputFile, output, 0644)
+		err := os.WriteFile(*outputFile, output, 0644)
 		if err != nil {
 			log.Fatalf("Failed to write to file: %v", err)
 		}
