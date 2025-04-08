@@ -1,40 +1,44 @@
 # har-to-hoverfly
-## Converts a HAR file into a Hoverfly simulation file (v5) or summarises request/response data
 
-This tool reads a HAR file (HTTP Archive) and either:
-- Outputs an equivalent [Hoverfly](https://hoverfly.io) simulation file, or
-- Summarises the HTTP traffic by grouping request/response pairs by host
+## Converts a HAR file to a Hoverfly simulation file for API mocking and testing
 
-The generated Hoverfly simulation supports exact matchers for method, path, query parameters, headers, and body. The summary mode provides a quick overview of API activity across hosts.
+This CLI tool ingests a HAR (HTTP Archive) file and produces a Hoverfly-compatible simulation. Useful for simulating real traffic and testing systems in isolation.
 
-### Usage:
+### Features
+
+- Filters entries by MIME type
+- Skips or includes only specific content types via `--allowed-content-types`
+- Optionally omits non-text entries
+- Summarise mode shows traffic structure
+- Supports limiting body size
+- Allows host restriction
+
+### Usage
+
 ```bash
-har-to-hoverfly [--output file.json] [--max-response-bytes N] [--skip-non-text] [--host hostname] [--summarise] <input.har>
+har-to-hoverfly --input <file.har> [flags]
 ```
 
-### Options:
-- `--output`: Write simulation output to a file (default is stdout)
-- `--max-response-bytes`: Omit or replace large response bodies (e.g. images, binaries)
-- `--skip-non-text`: Replace non-text responses with `NON_TEXT_RESPONSE_SKIPPED`
-- `--host`: Only include traffic for a specific destination host
-- `--summarise`: Print a summary table instead of a Hoverfly simulation file
+### Flags
 
-### Example: Convert a HAR to Hoverfly simulation
+| Flag                      | Description                                                                 |
+|---------------------------|-----------------------------------------------------------------------------|
+| `--input`                | Path to the input HAR file (required)                                       |
+| `--output`               | Output simulation JSON file path (optional, defaults to stdout)             |
+| `--max-body-bytes`       | Max body size for responses; truncate if exceeded                           |
+| `--ignore-non-text`      | Completely ignore non-text MIME types                                       |
+| `--allowed-content-types`| Comma-separated list of allowed substrings in MIME types                    |
+| `--host`                 | Restrict processing to entries for a specific destination host              |
+| `--summarise`            | Outputs a summary table grouped by host, method, path                       |
+
+### Example
+
 ```bash
-har-to-hoverfly --output simulation.json input.har
+har-to-hoverfly --input session.har --output simulation.json --ignore-non-text --allowed-content-types json,xml
 ```
 
-### Example: Summarise request/response activity to the console
-```bash
-har-to-hoverfly --summarise input.har
-```
+This processes a HAR file, includes only JSON/XML responses, and outputs a Hoverfly simulation file.
 
-### Example: Convert a HAR to Hoverfly simulation but only include text based content type responses that come from requests made to hoverfly.io and only include responses less than 10240 bytes
-```bash
-har-to-hoverfly --output simulation.json --skip-non-text --host hoverfly.io --max-response-bytes 10240 input.har
-```
+---
 
-### Example: Summarise request/response activity to the console but only include text based content type responses that come from requests made to hoverfly.io and only include responses less than 10240 bytes
-```bash
-har-to-hoverfly --summarise --skip-non-text --host hoverfly.io --max-response-bytes 10240 input.har
-```
+© 2024 IOCO Solutions 

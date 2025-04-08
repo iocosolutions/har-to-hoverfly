@@ -1,43 +1,37 @@
-// This program converts a HAR (HTTP Archive) file into a Hoverfly simulation file.
 package main
 
 import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/url"
 	"os"
-	"sort"
 	"strings"
+	"time"
 )
 
 type HAR struct {
 	Log struct {
-		Entries []struct {
-			Request struct {
-				Method  string `json:"method"`
-				URL     string `json:"url"`
-				Headers []struct {
-					Name  string `json:"name"`
-					Value string `json:"value"`
-				} `json:"headers"`
-				PostData struct {
-					Text string `json:"text"`
-				} `json:"postData"`
-			} `json:"request"`
-			Response struct {
-				Status  int `json:"status"`
-				Headers []struct {
-					Name  string `json:"name"`
-					Value string `json:"value"`
-				} `json:"headers"`
-				Content struct {
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"response"`
-		} `json:"entries"`
+		Entries []Entry `json:"entries"`
 	} `json:"log"`
+}
+
+type Entry struct {
+	StartedDateTime time.Time `json:"startedDateTime"`
+	Time            float64   `json:"time"`
+	Request         struct {
+		Method string `json:"method"`
+		URL    string `json:"url"`
+	} `json:"request"`
+	Response struct {
+		Status  int `json:"status"`
+		Content struct {
+			MimeType string `json:"mimeType"`
+			Text     string `json:"text"`
+		} `json:"content"`
+	} `json:"response"`
 }
 
 type FieldMatcher struct {
@@ -82,157 +76,149 @@ type Simulation struct {
 	} `json:"meta"`
 }
 
-func isTextContentType(contentType string) bool {
-	lower := strings.ToLower(contentType)
-	return strings.Contains(lower, "json") || strings.Contains(lower, "text") || strings.Contains(lower, "xml")
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	if max <= 3 {
-		return s[:max]
-	}
-	return s[:max-3] + "..."
-}
-
 func main() {
-	outputFile := flag.String("output", "", "Output file path (optional, defaults to stdout)")
-	maxResponseSize := flag.Int("max-response-bytes", -1, "Max response body size in bytes (optional, default: unlimited)")
-	skipNonText := flag.Bool("skip-non-text", false, "If set, non-text content types will get a generic response body")
-	hostFilter := flag.String("host", "", "Only include entries with this destination host (optional)")
-	summarise := flag.Bool("summarise", false, "If set, summarises request/response pairs instead of generating a simulation file")
+	inputFile := flag.String("input", "", "Path to HAR file")
+	outputFile := flag.String("output", "", "Path to output simulation JSON file (optional)")
+	sizeLimit := flag.Int("max-body-bytes", 0, "Optional maximum body size (in bytes). Larger responses will be replaced with an empty body.")
+	ignoreNonText := flag.Bool("ignore-non-text", false, "If set, non-textual content types will be excluded entirely from the simulation")
+	allowedTypes := flag.String("allowed-content-types", "json,xml,text/html,text/javascript", "Comma-separated list of MIME substrings considered text-based")
+	restrictHost := flag.String("host", "", "Restrict to entries for this destination host only")
+	summarise := flag.Bool("summarise", false, "Summarise request/response pairs grouped by host")
 	flag.Parse()
 
-	if flag.NArg() < 1 {
-		fmt.Println("Usage: har-to-hoverfly [--output file.json] [--max-response-bytes N] [--skip-non-text] [--host hostname] [--summarise] <input.har>")
-		os.Exit(1)
+	allowedContentTypes := strings.Split(*allowedTypes, ",")
+
+	if *inputFile == "" {
+		log.Fatal("You must provide a HAR file with --input")
 	}
 
-	inputFile := flag.Arg(0)
-	harData, err := os.ReadFile(inputFile)
+	data, err := ioutil.ReadFile(*inputFile)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to read file: %v", err)
 	}
 
 	var har HAR
-	err = json.Unmarshal(harData, &har)
+	err = json.Unmarshal(data, &har)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to parse HAR: %v", err)
 	}
 
-	if *summarise {
-		summaryMap := make(map[string][]string)
-		for _, entry := range har.Log.Entries {
-			r := entry.Request
-			u, err := url.Parse(r.URL)
-			if err != nil {
-				continue
-			}
-			if *hostFilter != "" && u.Host != *hostFilter {
-				continue
-			}
-			method := truncate(r.Method, 10)
-			path := truncate(u.Path, 50)
-			query := truncate(u.RawQuery, 50)
-			summary := fmt.Sprintf("%-10s %-50s %-50s", method, path, query)
-			summaryMap[u.Host] = append(summaryMap[u.Host], summary)
-		}
-		for host, summaries := range summaryMap {
-			fmt.Printf("\nHOST: %s\n", host)
-			fmt.Printf("  %-10s %-50s %-50s\n", "METHOD", "PATH", "QUERY")
-			sort.Strings(summaries)
-			for _, s := range summaries {
-				fmt.Println("  ", s)
-			}
-		}
-
-		return
-	}
-	var sim Simulation
+	sim := Simulation{}
 	sim.Meta.SchemaVersion = "v5.3"
 	sim.Data.GlobalActions = GlobalActions{Delays: []string{}}
 
+	table := make(map[string]map[string]map[string]bool)
+
 	for _, entry := range har.Log.Entries {
-		r := entry.Request
-		rURL := r.URL
-		u, err := url.Parse(rURL)
-		if err != nil {
-			continue
-		}
+		req := entry.Request
+		res := entry.Response
+		reqURL := parseURL(req.URL)
 
-		if *hostFilter != "" && u.Host != *hostFilter {
-			continue
-		}
-
-		// Request headers
-		reqHeaders := make(map[string][]FieldMatcher)
-		for _, h := range r.Headers {
-			reqHeaders[h.Name] = append(reqHeaders[h.Name], FieldMatcher{Matcher: "exact", Value: h.Value})
-		}
-
-		// Request query parameters
-		reqQuery := make(map[string][]FieldMatcher)
-		for key, values := range u.Query() {
-			for _, v := range values {
-				reqQuery[key] = append(reqQuery[key], FieldMatcher{Matcher: "exact", Value: v})
+		if *restrictHost != "" {
+			if !strings.Contains(req.URL, *restrictHost) {
+				continue
 			}
 		}
 
-		// Response headers
-		contentType := ""
-		headersMap := make(Header)
-		for _, h := range entry.Response.Headers {
-			lower := strings.ToLower(h.Name)
-			if lower == "content-type" {
-				contentType = h.Value
+		isText := isTextContent(res.Content.MimeType, allowedContentTypes)
+		if *ignoreNonText && !isText {
+			continue
+		}
+
+		if *summarise {
+			host := reqURL.Host
+			if _, ok := table[host]; !ok {
+				table[host] = make(map[string]map[string]bool)
 			}
-			headersMap[h.Name] = append(headersMap[h.Name], h.Value)
+			if _, ok := table[host][reqURL.Path]; !ok {
+				table[host][reqURL.Path] = make(map[string]bool)
+			}
+			table[host][reqURL.Path][req.Method] = true
+			continue
 		}
 
-		responseBody := entry.Response.Content.Text
-		if *maxResponseSize >= 0 && len(responseBody) > *maxResponseSize {
-			responseBody = ""
-		}
-		if *skipNonText && !isTextContentType(contentType) {
-			responseBody = "NON_TEXT_RESPONSE_SKIPPED"
-		}
-
-		pair := Pair{
-			Request: Request{
-				Method:      []FieldMatcher{{Matcher: "exact", Value: r.Method}},
-				Destination: []FieldMatcher{{Matcher: "exact", Value: u.Host}},
-				Path:        []FieldMatcher{{Matcher: "exact", Value: u.Path}},
-				Headers:     reqHeaders,
-				Query:       reqQuery,
-			},
-			Response: Response{
-				Status:  entry.Response.Status,
-				Body:    responseBody,
-				Headers: headersMap,
-			},
-			Labels: []string{},
-		}
-
-		if r.PostData.Text != "" {
-			pair.Request.Body = []FieldMatcher{{Matcher: "exact", Value: r.PostData.Text}}
-		}
-
+		pair := convertEntryToPair(entry, *sizeLimit, allowedContentTypes)
 		sim.Data.Pairs = append(sim.Data.Pairs, pair)
+	}
+
+	if *summarise {
+		fmt.Printf("%-30s %-10s %-50s %-50s\n", "HOST", "METHOD", "PATH", "QUERY")
+		for host, paths := range table {
+			for path, methods := range paths {
+				for method := range methods {
+					fmt.Printf("%-30s %-10s %-50s %-50s\n", host, method, truncate(path, 50), "")
+				}
+			}
+		}
+		return
 	}
 
 	output, err := json.MarshalIndent(sim, "", "  ")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to serialize simulation: %v", err)
 	}
 
 	if *outputFile != "" {
-		err := os.WriteFile(*outputFile, output, 0644)
+		err = os.WriteFile(*outputFile, output, 0644)
 		if err != nil {
-			log.Fatalf("Failed to write to file: %v", err)
+			log.Fatalf("Failed to write output file: %v", err)
 		}
 	} else {
 		fmt.Println(string(output))
 	}
+}
+
+func isTextContent(mimeType string, allowed []string) bool {
+	mimeType = strings.ToLower(mimeType)
+	for _, substr := range allowed {
+		if strings.Contains(mimeType, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseURL(raw string) *url.URL {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return &url.URL{}
+	}
+	return u
+}
+
+func convertEntryToPair(entry Entry, sizeLimit int, allowedContentTypes []string) Pair {
+	req := entry.Request
+	res := entry.Response
+
+	body := res.Content.Text
+	if sizeLimit > 0 && len(body) > sizeLimit {
+		body = ""
+	}
+
+	reqURL := parseURL(req.URL)
+
+	request := Request{
+		Method:      []FieldMatcher{{Matcher: "exact", Value: req.Method}},
+		Destination: []FieldMatcher{{Matcher: "exact", Value: reqURL.Host}},
+		Path:        []FieldMatcher{{Matcher: "exact", Value: reqURL.Path}},
+	}
+
+	response := Response{
+		Status:  res.Status,
+		Body:    body,
+		Headers: Header{"Content-Type": []string{res.Content.MimeType}},
+	}
+
+	return Pair{
+		Request:  request,
+		Response: response,
+		Labels:   []string{req.Method},
+	}
+}
+
+func truncate(s string, max int) string {
+	if len(s) > max {
+		return s[:max-3] + "..."
+	}
+	return s
 }
