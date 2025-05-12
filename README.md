@@ -34,11 +34,9 @@ har-to-hoverfly --input <file.har> [flags]
 ### Example
 
 ```bash
-har-to-hoverfly --input session.har --output simulation.json --ignore-non-text --allowed-content-types json,xml
+har-to-hoverfly --input cloud.hfcdev.iocodev.uk.har --output simulation.json --ignore-non-text --allowed-content-types json,xml
 ```
-
 This processes a HAR file, includes only JSON/XML responses, and outputs a Hoverfly simulation file.
-
 ---
 
 © 2024 IOCO Solutions 

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 type HAR struct {
@@ -18,33 +19,19 @@ type HAR struct {
 }
 
 type Entry struct {
-	Request  HarRequest  `json:"request"`
-	Response HarResponse `json:"response"`
-}
-
-type HarHeader struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
-type PostData struct {
-	MimeType string `json:"mimeType"`
-	Text     string `json:"text"`
-}
-
-type HarRequest struct {
-	Method   string      `json:"method"`
-	URL      string      `json:"url"`
-	Headers  []HarHeader `json:"headers"`
-	PostData PostData    `json:"postData,omitempty"`
-}
-
-type HarResponse struct {
-	Status  int `json:"status"`
-	Content struct {
-		MimeType string `json:"mimeType"`
-		Text     string `json:"text"`
-	} `json:"content"`
+	StartedDateTime time.Time `json:"startedDateTime"`
+	Time            float64   `json:"time"`
+	Request         struct {
+		Method string `json:"method"`
+		URL    string `json:"url"`
+	} `json:"request"`
+	Response struct {
+		Status  int `json:"status"`
+		Content struct {
+			MimeType string `json:"mimeType"`
+			Text     string `json:"text"`
+		} `json:"content"`
+	} `json:"response"`
 }
 
 type FieldMatcher struct {
@@ -210,39 +197,10 @@ func convertEntryToPair(entry Entry, sizeLimit int, allowedContentTypes []string
 
 	reqURL := parseURL(req.URL)
 
-	// Build request headers
-	headers := map[string][]FieldMatcher{}
-	for _, h := range req.Headers {
-		headers[h.Name] = []FieldMatcher{{Matcher: "exact", Value: h.Value}}
-	}
-
-	// Build query parameters
-	queryParams := map[string][]FieldMatcher{}
-	if reqURL.RawQuery != "" {
-		for _, kv := range strings.Split(reqURL.RawQuery, "&") {
-			parts := strings.SplitN(kv, "=", 2)
-			if len(parts) == 2 {
-				k, v := parts[0], parts[1]
-				queryParams[k] = []FieldMatcher{{Matcher: "exact", Value: v}}
-			}
-		}
-	}
-
-	// Request body matcher (only if text and allowed content-type)
-	var reqBody []FieldMatcher
-	if req.PostData.MimeType != "" && isTextContent(req.PostData.MimeType, allowedContentTypes) {
-		if req.PostData.Text != "" {
-			reqBody = []FieldMatcher{{Matcher: "exact", Value: req.PostData.Text}}
-		}
-	}
-
 	request := Request{
 		Method:      []FieldMatcher{{Matcher: "exact", Value: req.Method}},
 		Destination: []FieldMatcher{{Matcher: "exact", Value: reqURL.Host}},
 		Path:        []FieldMatcher{{Matcher: "exact", Value: reqURL.Path}},
-		Headers:     headers,
-		Body:        reqBody,
-		Query:       queryParams,
 	}
 
 	response := Response{
